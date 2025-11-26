@@ -3,36 +3,45 @@ import pandas as pd
 
 st.set_page_config(page_title="Mixpanel Comparison Tool", layout="wide")
 
-st.title("📊 Mixpanel Event Comparison Tool")
+st.title("📊 Mixpanel Event Comparison Tool (Textbox Version)")
 
 st.markdown("""
-Upload **PRD**, **Android Events**, and **iOS Events** to compare parameters, 
-identify missing fields, and check extra values across platforms.
+Paste Android & iOS event params directly, and upload PRD to compare.
 """)
 
 # ------------------------------------------------------------------------------------
-# FILE UPLOAD SECTION
+# FILE UPLOAD FOR PRD
 # ------------------------------------------------------------------------------------
 
 prd_file = st.file_uploader("Upload PRD (CSV or Excel)", type=["csv", "xlsx"])
-android_file = st.file_uploader("Upload Android Events (JSON or CSV)", type=["json", "csv"])
-ios_file = st.file_uploader("Upload iOS Events (JSON or CSV)", type=["json", "csv"])
+
+# ------------------------------------------------------------------------------------
+# TEXTBOX INPUT FOR ANDROID & IOS
+# ------------------------------------------------------------------------------------
+
+st.subheader("Android Event Params")
+android_text = st.text_area(
+    "Paste Android event parameters here (comma or newline separated):",
+    height=150
+)
+
+st.subheader("iOS Event Params")
+ios_text = st.text_area(
+    "Paste iOS event parameters here (comma or newline separated):",
+    height=150
+)
 
 # ------------------------------------------------------------------------------------
 # HELPER FUNCTIONS
 # ------------------------------------------------------------------------------------
 
-def load_file(file):
-    if file is None:
-        return None
-    if file.name.endswith(".csv"):
-        return pd.read_csv(file)
-    if file.name.endswith(".xlsx"):
-        return pd.read_excel(file)
-    if file.name.endswith(".json"):
-        return pd.read_json(file)
-    return None
-
+def parse_params(raw):
+    if not raw:
+        return []
+    separators = [",", "\n"]
+    for sep in separators:
+        raw = raw.replace(sep, ",")
+    return [p.strip() for p in raw.split(",") if p.strip()]
 
 def compare_params(prd_params, ios_params, android_params):
     prd_set = set(prd_params)
@@ -40,45 +49,49 @@ def compare_params(prd_params, ios_params, android_params):
     android_set = set(android_params)
 
     return {
-        "Missing in iOS": list(prd_set - ios_set),
-        "Missing in Android": list(prd_set - android_set),
-        "Extra in iOS": list(ios_set - prd_set),
-        "Extra in Android": list(android_set - prd_set),
+        "Missing in iOS": sorted(list(prd_set - ios_set)),
+        "Missing in Android": sorted(list(prd_set - android_set)),
+        "Extra in iOS": sorted(list(ios_set - prd_set)),
+        "Extra in Android": sorted(list(android_set - prd_set)),
     }
 
+def load_prd(file):
+    if file is None:
+        return None
+    if file.name.endswith(".csv"):
+        return pd.read_csv(file)
+    if file.name.endswith(".xlsx"):
+        return pd.read_excel(file)
+    return None
+
 # ------------------------------------------------------------------------------------
-# PROCESS WHEN ALL FILES ARE UPLOADED
+# PROCESS WHEN PRD + TEXTBOXES ARE FILLED
 # ------------------------------------------------------------------------------------
 
-if prd_file and android_file and ios_file:
+if prd_file and (android_text or ios_text):
 
-    prd_df = load_file(prd_file)
-    android_df = load_file(android_file)
-    ios_df = load_file(ios_file)
+    prd_df = load_prd(prd_file)
 
-    # Basic validation
-    required_cols = ["Event name", "Params"]
-
-    if not all(col in prd_df.columns for col in required_cols):
-        st.error("PRD must contain columns: Event name, Params")
+    if prd_df is None:
+        st.error("PRD file format not supported.")
         st.stop()
 
-    st.success("Files loaded successfully!")
+    if "Event name" not in prd_df.columns or "Params" not in prd_df.columns:
+        st.error("PRD must contain 'Event name' and 'Params' columns.")
+        st.stop()
+
+    android_params = parse_params(android_text)
+    ios_params = parse_params(ios_text)
+
+    st.success("PRD + Android + iOS inputs loaded!")
 
     st.header("🔍 Event-wise Comparison")
 
-    # Output table
     output_rows = []
 
     for _, row in prd_df.iterrows():
         event = row["Event name"]
-        prd_params = [p.strip() for p in str(row["Params"]).split(",")]
-
-        ios_event = ios_df[ios_df["event"] == event]
-        android_event = android_df[android_df["event"] == event]
-
-        ios_params = list(ios_event.columns) if not ios_event.empty else []
-        android_params = list(android_event.columns) if not android_event.empty else []
+        prd_params = parse_params(str(row["Params"]))
 
         comparison = compare_params(prd_params, ios_params, android_params)
 
@@ -96,5 +109,4 @@ if prd_file and android_file and ios_file:
     st.dataframe(output_df, use_container_width=True)
 
 else:
-    st.info("Upload all three files to begin comparison.")
-
+    st.info("Upload PRD and paste Android/iOS params to start comparison.")
