@@ -1,78 +1,75 @@
 import streamlit as st
-import pandas as pd
 import json
+import pandas as pd
 
 st.title("Event Comparison (Android vs iOS)")
 
-# ----------- EXPECTED PRD FIELDS -----------
-EXPECTED_EVENTS = {
-    "Part Started": {
-        "fields": ["part_id", "part_type"],
-        "notes": "part_type: live / test / general"
-    },
-    "Part Ended": {
-        "fields": ["part_id", "part_status"],
-        "notes": "part_status: ended"
-    },
-    "Live Waiting Status": {
-        "fields": ["live_status"],
-        "notes": "live_status: waiting"
-    },
-    "Video Play Event": {
-        "fields": ["video_type", "video_id"],
-        "notes": "video_type, video_id"
-    },
-    "Video Playback Duration": {
-        "fields": ["playback_duration"],
-        "notes": "playback_duration event sent"
-    }
-}
+st.write("Paste the JSON for Android and iOS events.")
 
+android_input = st.text_area("Android JSON", height=200)
+ios_input = st.text_area("iOS JSON", height=200)
 
-# ---------- INPUT BOXES ----------
-st.subheader("Paste Android JSON")
-android_json_text = st.text_area("Android Event JSON", height=200, key="a")
+def check_field(data, field):
+    return field in data and data[field] not in [None, "", {}]
 
-st.subheader("Paste iOS JSON")
-ios_json_text = st.text_area("iOS Event JSON", height=200, key="b")
+def check_part_started(data):
+    return check_field(data, "part_id") and check_field(data, "part_type")
 
-# Try to parse JSON
-try:
-    android_event = json.loads(android_json_text) if android_json_text.strip() else {}
-except:
-    android_event = {}
-    st.error("Invalid Android JSON")
+def check_part_ended(data):
+    return check_field(data, "part_status") and data.get("part_status") == "ended"
 
-try:
-    ios_event = json.loads(ios_json_text) if ios_json_text.strip() else {}
-except:
-    ios_event = {}
-    st.error("Invalid iOS JSON")
+def check_live_waiting(data):
+    return check_field(data, "live_status") and data.get("live_status") == "waiting"
 
+def check_video_play(data):
+    return check_field(data, "video_id") and check_field(data, "video_type")
 
-def check_fields(event_json, required_fields):
-    """Returns True if all required PRD fields exist."""
-    return all(field in event_json for field in required_fields)
+def check_video_playback(data):
+    return check_field(data, "playback_duration")
 
+def tick(val):
+    return "✔" if val else "❌"
 
-# ----------- BUILD TABLE -----------
-table_rows = []
+if st.button("Compare"):
+    try:
+        android_json = json.loads(android_input) if android_input.strip() else {}
+        ios_json = json.loads(ios_input) if ios_input.strip() else {}
+    except:
+        st.error("Invalid JSON format. Please check your input.")
+        st.stop()
 
-for event_name, info in EXPECTED_EVENTS.items():
-    required_fields = info["fields"]
+    results = [
+        {
+            "Event": "Part Started",
+            "Android": tick(check_part_started(android_json)),
+            "iOS": tick(check_part_started(ios_json)),
+            "Notes": "part_type: live / test / general"
+        },
+        {
+            "Event": "Part Ended",
+            "Android": tick(check_part_ended(android_json)),
+            "iOS": tick(check_part_ended(ios_json)),
+            "Notes": "part_status: ended"
+        },
+        {
+            "Event": "Live Waiting Status",
+            "Android": tick(check_live_waiting(android_json)),
+            "iOS": tick(check_live_waiting(ios_json)),
+            "Notes": "live_status: waiting"
+        },
+        {
+            "Event": "Video Play Event",
+            "Android": tick(check_video_play(android_json)),
+            "iOS": tick(check_video_play(ios_json)),
+            "Notes": "video_type, video_id"
+        },
+        {
+            "Event": "Video Playback Duration",
+            "Android": tick(check_video_playback(android_json)),
+            "iOS": tick(check_video_playback(ios_json)),
+            "Notes": "playback_duration event sent"
+        }
+    ]
 
-    android_ok = check_fields(android_event, required_fields)
-    ios_ok = check_fields(ios_event, required_fields)
-
-    table_rows.append({
-        "Event": event_name,
-        "Android": "✔" if android_ok else "❌",
-        "iOS": "✔" if ios_ok else "❌",
-        "Notes": info["notes"]
-    })
-
-df = pd.DataFrame(table_rows)
-
-st.subheader("✅ Part-Level Events (Covered)")
-st.dataframe(df, use_container_width=True)
-
+    df = pd.DataFrame(results)
+    st.subheader("✅ Par
