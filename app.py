@@ -1,112 +1,56 @@
-import streamlit as st
-import pandas as pd
+import json
+from tabulate import tabulate
 
-st.set_page_config(page_title="Mixpanel Comparison Tool", layout="wide")
+def compare_events(android_json, ios_json):
+    # Convert JSON strings → dict
+    android = json.loads(android_json)
+    ios = json.loads(ios_json)
 
-st.title("📊 Mixpanel Event Comparison Tool (Textbox Version)")
+    # Get all unique keys across both
+    all_keys = set(android.keys()) | set(ios.keys())
 
-st.markdown("""
-Paste Android & iOS event params directly, and upload PRD to compare.
-""")
+    rows = []
+    for key in sorted(all_keys):
+        a_val = android.get(key, "-")
+        i_val = ios.get(key, "-")
+        match = "✓" if a_val == i_val else "✗"
+        rows.append([key, a_val, i_val, match])
 
-# ------------------------------------------------------------------------------------
-# FILE UPLOAD FOR PRD
-# ------------------------------------------------------------------------------------
+    print("\n" + tabulate(rows, headers=["Field", "Android", "iOS", "Match"], tablefmt="grid"))
 
-prd_file = st.file_uploader("Upload PRD (CSV or Excel)", type=["csv", "xlsx"])
 
-# ------------------------------------------------------------------------------------
-# TEXTBOX INPUT FOR ANDROID & IOS
-# ------------------------------------------------------------------------------------
+# ------------------------------
+# EXAMPLE USAGE
+# ------------------------------
 
-st.subheader("Android Event Params")
-android_text = st.text_area(
-    "Paste Android event parameters here (comma or newline separated):",
-    height=150
-)
+android_event = """
+{
+    "app_device_id": "m.174D4E04-4C16-477F-ADF0-BE064B691E65",
+    "build_version": "11702",
+    "course_id": 1,
+    "device_type": "Android",
+    "part_id": "6924548d141112db388ad071",
+    "platform": "Android",
+    "session_id": "68e3433454eb187b6601dc1c",
+    "subject_id": "66a3c9b9189bd8a4b4dcf463",
+    "video_id": "692460c00ededf7363e6594d",
+    "video_type": "general"
+}
+"""
 
-st.subheader("iOS Event Params")
-ios_text = st.text_area(
-    "Paste iOS event parameters here (comma or newline separated):",
-    height=150
-)
+ios_event = """
+{
+    "app_device_id": "m.174D4E04-4C16-477F-ADF0-BE064B691E65",
+    "build_version": "11702",
+    "course_id": 1,
+    "device_type": "iPhone",
+    "part_id": "6924548d141112db388ad071",
+    "platform": "iOS",
+    "session_id": "68e3433454eb187b6601dc1c",
+    "subject_id": "66a3c9b9189bd8a4b4dcf463",
+    "video_id": "692460c00ededf7363e6594d",
+    "video_type": "general"
+}
+"""
 
-# ------------------------------------------------------------------------------------
-# HELPER FUNCTIONS
-# ------------------------------------------------------------------------------------
-
-def parse_params(raw):
-    if not raw:
-        return []
-    separators = [",", "\n"]
-    for sep in separators:
-        raw = raw.replace(sep, ",")
-    return [p.strip() for p in raw.split(",") if p.strip()]
-
-def compare_params(prd_params, ios_params, android_params):
-    prd_set = set(prd_params)
-    ios_set = set(ios_params)
-    android_set = set(android_params)
-
-    return {
-        "Missing in iOS": sorted(list(prd_set - ios_set)),
-        "Missing in Android": sorted(list(prd_set - android_set)),
-        "Extra in iOS": sorted(list(ios_set - prd_set)),
-        "Extra in Android": sorted(list(android_set - prd_set)),
-    }
-
-def load_prd(file):
-    if file is None:
-        return None
-    if file.name.endswith(".csv"):
-        return pd.read_csv(file)
-    if file.name.endswith(".xlsx"):
-        return pd.read_excel(file)
-    return None
-
-# ------------------------------------------------------------------------------------
-# PROCESS WHEN PRD + TEXTBOXES ARE FILLED
-# ------------------------------------------------------------------------------------
-
-if prd_file and (android_text or ios_text):
-
-    prd_df = load_prd(prd_file)
-
-    if prd_df is None:
-        st.error("PRD file format not supported.")
-        st.stop()
-
-    if "Event name" not in prd_df.columns or "Params" not in prd_df.columns:
-        st.error("PRD must contain 'Event name' and 'Params' columns.")
-        st.stop()
-
-    android_params = parse_params(android_text)
-    ios_params = parse_params(ios_text)
-
-    st.success("PRD + Android + iOS inputs loaded!")
-
-    st.header("🔍 Event-wise Comparison")
-
-    output_rows = []
-
-    for _, row in prd_df.iterrows():
-        event = row["Event name"]
-        prd_params = parse_params(str(row["Params"]))
-
-        comparison = compare_params(prd_params, ios_params, android_params)
-
-        output_rows.append({
-            "Event": event,
-            "PRD Params": ", ".join(prd_params),
-            "Missing in iOS": ", ".join(comparison["Missing in iOS"]) or "—",
-            "Missing in Android": ", ".join(comparison["Missing in Android"]) or "—",
-            "Extra in iOS": ", ".join(comparison["Extra in iOS"]) or "—",
-            "Extra in Android": ", ".join(comparison["Extra in Android"]) or "—",
-        })
-
-    output_df = pd.DataFrame(output_rows)
-
-    st.dataframe(output_df, use_container_width=True)
-
-else:
-    st.info("Upload PRD and paste Android/iOS params to start comparison.")
+compare_events(android_event, ios_event)
