@@ -1,60 +1,78 @@
-import json
 import streamlit as st
+import pandas as pd
+import json
 
-st.title("Event Comparison Tool (Android vs iOS)")
+st.title("Event Comparison (Android vs iOS)")
 
-# ----------- INPUT SECTION ---------------------------------
-st.subheader("Paste Android Event JSON")
-android_raw = st.text_area("Android JSON", height=200)
+# ----------- EXPECTED PRD FIELDS -----------
+EXPECTED_EVENTS = {
+    "Part Started": {
+        "fields": ["part_id", "part_type"],
+        "notes": "part_type: live / test / general"
+    },
+    "Part Ended": {
+        "fields": ["part_id", "part_status"],
+        "notes": "part_status: ended"
+    },
+    "Live Waiting Status": {
+        "fields": ["live_status"],
+        "notes": "live_status: waiting"
+    },
+    "Video Play Event": {
+        "fields": ["video_type", "video_id"],
+        "notes": "video_type, video_id"
+    },
+    "Video Playback Duration": {
+        "fields": ["playback_duration"],
+        "notes": "playback_duration event sent"
+    }
+}
 
-st.subheader("Paste iOS Event JSON")
-ios_raw = st.text_area("iOS JSON", height=200)
 
-if st.button("Compare Events"):
-    try:
-        android = json.loads(android_raw)
-        ios = json.loads(ios_raw)
-    except Exception as e:
-        st.error("Invalid JSON input")
-        st.stop()
+# ---------- INPUT BOXES ----------
+st.subheader("Paste Android JSON")
+android_json_text = st.text_area("Android Event JSON", height=200, key="a")
 
-    # -------------------------------------------------------
-    # Collect all keys from both platforms
-    all_keys = sorted(set(list(android.keys()) + list(ios.keys())))
+st.subheader("Paste iOS JSON")
+ios_json_text = st.text_area("iOS Event JSON", height=200, key="b")
 
-    # -------------------------------------------------------
-    # Prepare table header
-    rows = []
-    header = ["Field", "Android Value", "iOS Value", "Match?"]
+# Try to parse JSON
+try:
+    android_event = json.loads(android_json_text) if android_json_text.strip() else {}
+except:
+    android_event = {}
+    st.error("Invalid Android JSON")
 
-    for key in all_keys:
-        a_val = android.get(key, "")
-        i_val = ios.get(key, "")
+try:
+    ios_event = json.loads(ios_json_text) if ios_json_text.strip() else {}
+except:
+    ios_event = {}
+    st.error("Invalid iOS JSON")
 
-        # Check match
-        if key in android and key in ios:
-            match = "✔" if str(a_val) == str(i_val) else "✘"
-        else:
-            match = "✘"
 
-        rows.append([key, str(a_val), str(i_val), match])
+def check_fields(event_json, required_fields):
+    """Returns True if all required PRD fields exist."""
+    return all(field in event_json for field in required_fields)
 
-    # -------------------------------------------------------
-    # Render table manually (no tabulate needed)
-    st.subheader("Comparison Table")
 
-    # Build table in Markdown format
-    table_md = "| Field | Android Value | iOS Value | Match |\n"
-    table_md += "|-------|---------------|-----------|--------|\n"
+# ----------- BUILD TABLE -----------
+table_rows = []
 
-    for r in rows:
-        table_md += f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} |\n"
+for event_name, info in EXPECTED_EVENTS.items():
+    required_fields = info["fields"]
 
-    st.markdown(table_md)
+    android_ok = check_fields(android_event, required_fields)
+    ios_ok = check_fields(ios_event, required_fields)
 
-    # Summary
-    total = len(rows)
-    matches = sum(1 for r in rows if r[3] == "✔")
+    table_rows.append({
+        "Event": event_name,
+        "Android": "✔" if android_ok else "❌",
+        "iOS": "✔" if ios_ok else "❌",
+        "Notes": info["notes"]
+    })
 
-    st.success(f"Matched: {matches}/{total} fields")
+df = pd.DataFrame(table_rows)
+
+st.subheader("✅ Part-Level Events (Covered)")
+st.dataframe(df, use_container_width=True)
 
