@@ -1,103 +1,309 @@
 import streamlit as st
+import docx
 import json
+import csv
+import io
+import re
+from datetime import datetime
+import google.generativeai as genai
+import os
+from typing import List, Dict, Any
 
-st.title("Event Comparison Tool (Android vs iOS)")
+# Page config
+st.set_page_config(
+    page_title="Test Case Generator",
+    page_icon="🧪",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.write("Paste Android & iOS event JSON below:")
+# Initialize session state
+if 'test_case_groups' not in st.session_state:
+    st.session_state.test_case_groups = []
+if 'prd_file_name' not in st.session_state:
+    st.session_state.prd_file_name = ''
 
-android_json = st.text_area("Android JSON")
-ios_json = st.text_area("iOS JSON")
+# Categories
+CATEGORIES = [
+    'Positive',
+    'Negative',
+    'Edge Cases',
+    'Boundary',
+    'Integration',
+    'Performance',
+    'Security',
+    'Usability',
+]
 
-# ---------- Utility to safely load JSON ----------
-def load_json(text):
-    try:
-        return json.loads(text)
-    except:
-        return {}
+PROMPT_TEMPLATE = """You are an expert QA engineer. Your task is to thoroughly analyze the following Product Requirements Document (PRD) and generate comprehensive, detailed test cases that cover ALL features, functionalities, and requirements mentioned in the document.
 
-# ---------- Comparison Logic ----------
-def check_event(event_name, android_dict, ios_dict, keys):
-    android_match = all(k in android_dict for k in keys)
-    ios_match = all(k in ios_dict for k in keys)
+PRD Content:
+{PRD_TEXT}
 
-    return {
-        "Event": event_name,
-        "Android": "✔" if android_match else "✖",
-        "iOS": "✔" if ios_match else "✖",
-    }
+IMPORTANT INSTRUCTIONS:
+1. Read the ENTIRE PRD carefully and identify ALL features, user stories, requirements, and functionalities
+2. For EACH feature/requirement identified, generate multiple test cases across different categories
+3. Ensure you cover every aspect mentioned in the PRD - nothing should be missed
+4. Generate a MINIMUM of 8-12 test cases per category (not just 5)
+5. Be thorough - if a feature has multiple scenarios, create test cases for each
 
+Generate test cases for each of the following categories:
+1. Positive - Test cases for valid inputs, happy paths, and expected successful behavior
+2. Negative - Test cases for invalid inputs, error conditions, and failure scenarios
+3. Edge Cases - Test cases for boundary conditions, unusual inputs, and corner cases
+4. Boundary - Test cases for limit values, maximums, minimums, and thresholds
+5. Integration - Test cases for component interactions, API integrations, and system integration
+6. Performance - Test cases for load, stress, response time, and performance requirements
+7. Security - Test cases for authentication, authorization, data protection, and security vulnerabilities
+8. Usability - Test cases for user experience, interface usability, accessibility, and user workflows
 
-if st.button("Compare Events"):
+For each test case, provide:
+- A clear, descriptive title that identifies the specific feature/requirement being tested
+- A detailed description explaining what is being tested and why
+- Step-by-step test steps (be specific and detailed)
+- Expected result (what should happen when the test passes)
+- Priority (High for critical features, Medium for important features, Low for nice-to-have)
 
-    # Load JSON safely
-    android_data = load_json(android_json)
-    ios_data = load_json(ios_json)
-
-    # Event definitions
-    comparisons = [
-        check_event(
-            "Part Started",
-            android_data,
-            ios_data,
-            ["part_id", "part_type"]
-        ),
-        check_event(
-            "Part Ended",
-            android_data,
-            ios_data,
-            ["part_status"]
-        ),
-        check_event(
-            "Live Waiting Status",
-            android_data,
-            ios_data,
-            ["live_status"]
-        ),
-        check_event(
-            "Video Play Event",
-            android_data,
-            ios_data,
-            ["video_type", "video_id"]
-        ),
-        check_event(
-            "Video Playback Duration",
-            android_data,
-            ios_data,
-            ["playback_duration"]
-        ),
+Return the response as a JSON array with the following structure:
+[
+  {{
+    "category": "Positive",
+    "testCases": [
+      {{
+        "title": "Test case title",
+        "description": "Detailed description",
+        "steps": ["Step 1", "Step 2", "Step 3"],
+        "expectedResult": "What should happen",
+        "priority": "High"
+      }}
     ]
+  }}
+]
 
-    # Display section header
-    st.subheader("✅ Part-Level Events (Covered)")
+CRITICAL REQUIREMENTS:
+- Generate MINIMUM 8-12 test cases per category (more if the PRD is complex)
+- Cover EVERY feature and requirement mentioned in the PRD
+- Ensure test cases are specific to the features described in the PRD
+- Be comprehensive - don't miss any functionality
+- Always return valid JSON only, no additional text or markdown formatting"""
 
-    # Build final table with Notes
-    table_rows = []
-    for row in comparisons:
-        notes = ""
-        if row["Event"] == "Part Started":
-            notes = "part_type: live / test / general"
-        elif row["Event"] == "Part Ended":
-            notes = "part_status: ended"
-        elif row["Event"] == "Live Waiting Status":
-            notes = "live_status: waiting"
-        elif row["Event"] == "Video Play Event":
-            notes = "video_type, video_id"
-        elif row["Event"] == "Video Playback Duration":
-            notes = "playback_duration event sent"
+def extract_text_from_docx(file) -> str:
+    """Extract text from DOCX file"""
+    try:
+        doc = docx.Document(file)
+        text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+        return text
+    except Exception as e:
+        raise Exception(f"Failed to extract text from DOCX: {str(e)}")
 
-        table_rows.append([
-            row["Event"],
-            row["Android"],
-            row["iOS"],
-            notes
-        ])
+def generate_test_cases(prd_text: str) -> List[Dict[str, Any]]:
+    """Generate test cases using Gemini API"""
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    
+    if not api_key:
+        raise Exception("GEMINI_API_KEY not found. Please set it in Streamlit secrets or environment variables.")
+    
+    genai.configure(api_key=api_key)
+    
+    # Try different models
+    models_to_try = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-pro']
+    
+    prompt = PROMPT_TEMPLATE.replace("{PRD_TEXT}", prd_text)
+    
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            response_text = response.text
+            
+            # Parse JSON from response
+            json_match = re.search(r'\[[\s\S]*\]', response_text)
+            if json_match:
+                test_cases = json.loads(json_match.group())
+            else:
+                test_cases = json.loads(response_text)
+            
+            return test_cases
+        except Exception as e:
+            last_error = e
+            continue
+    
+    raise Exception(f"All Gemini models failed. Last error: {str(last_error)}")
 
-    # Render table in Streamlit
-    st.table(
-        {
-            "Event": [r[0] for r in table_rows],
-            "Android": [r[1] for r in table_rows],
-            "iOS": [r[2] for r in table_rows],
-            "Notes": [r[3] for r in table_rows],
-        }
+def ensure_all_categories(test_case_groups: List[Dict]) -> List[Dict]:
+    """Ensure all categories are present"""
+    category_map = {group['category']: group for group in test_case_groups}
+    
+    # Add missing categories
+    for category in CATEGORIES:
+        if category not in category_map:
+            category_map[category] = {
+                'category': category,
+                'testCases': []
+            }
+    
+    # Add IDs to test cases
+    result = []
+    for category in CATEGORIES:
+        group = category_map[category]
+        for idx, tc in enumerate(group.get('testCases', [])):
+            tc['id'] = f"{category}-{idx}-{int(datetime.now().timestamp() * 1000)}"
+        result.append(group)
+    
+    return result
+
+def export_to_json(test_case_groups: List[Dict]) -> str:
+    """Export test cases to JSON"""
+    return json.dumps(test_case_groups, indent=2)
+
+def export_to_csv(test_case_groups: List[Dict]) -> str:
+    """Export test cases to CSV"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Header
+    writer.writerow(['Category', 'Title', 'Description', 'Steps', 'Expected Result', 'Priority'])
+    
+    # Data rows
+    for group in test_case_groups:
+        for tc in group.get('testCases', []):
+            steps = ' | '.join(tc.get('steps', []))
+            writer.writerow([
+                group['category'],
+                tc.get('title', ''),
+                tc.get('description', ''),
+                steps,
+                tc.get('expectedResult', ''),
+                tc.get('priority', 'Medium')
+            ])
+    
+    return output.getvalue()
+
+# Main UI
+st.title("🧪 Test Case Generator")
+st.markdown("Upload your PRD document and get comprehensive test cases generated by AI")
+
+# Sidebar for API key configuration
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    api_key_input = st.text_input(
+        "Gemini API Key",
+        type="password",
+        help="Get your free API key from https://makersuite.google.com/app/apikey",
+        value=st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, 'secrets') else ""
     )
+    
+    if api_key_input:
+        os.environ["GEMINI_API_KEY"] = api_key_input
+    
+    st.markdown("---")
+    st.markdown("### 📝 Instructions")
+    st.markdown("""
+    1. Upload a DOCX file containing your PRD
+    2. Wait for AI to generate test cases
+    3. Review and export test cases
+    """)
+
+# File upload
+uploaded_file = st.file_uploader(
+    "Upload PRD Document",
+    type=['docx'],
+    help="Only DOCX files are supported"
+)
+
+if uploaded_file is not None:
+    if st.button("Generate Test Cases", type="primary", use_container_width=True):
+        with st.spinner("Processing your PRD and generating test cases..."):
+            try:
+                # Step 1: Extract text from DOCX
+                prd_text = extract_text_from_docx(uploaded_file)
+                
+                if not prd_text or not prd_text.strip():
+                    st.error("The document appears to be empty or could not be read")
+                    st.stop()
+                
+                st.session_state.prd_file_name = uploaded_file.name
+                
+                # Step 2: Generate test cases
+                test_case_groups = generate_test_cases(prd_text)
+                
+                # Step 3: Ensure all categories are present
+                test_case_groups = ensure_all_categories(test_case_groups)
+                
+                st.session_state.test_case_groups = test_case_groups
+                
+                st.success("✅ Test cases generated successfully!")
+                
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+                st.stop()
+
+# Display test cases
+if st.session_state.test_case_groups:
+    st.markdown("---")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.header("📋 Generated Test Cases")
+        if st.session_state.prd_file_name:
+            st.caption(f"From: {st.session_state.prd_file_name}")
+    
+    with col2:
+        st.markdown("### Export")
+        json_data = export_to_json(st.session_state.test_case_groups)
+        csv_data = export_to_csv(st.session_state.test_case_groups)
+        
+        st.download_button(
+            "📥 JSON",
+            json_data,
+            file_name=f"test-cases-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json",
+            mime="application/json"
+        )
+        
+        st.download_button(
+            "📥 CSV",
+            csv_data,
+            file_name=f"test-cases-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
+            mime="text/csv"
+        )
+    
+    # Display test cases by category
+    for group in st.session_state.test_case_groups:
+        with st.expander(f"📁 {group['category']} ({len(group.get('testCases', []))} test cases)", expanded=True):
+            test_cases = group.get('testCases', [])
+            
+            if not test_cases:
+                st.info("No test cases generated for this category")
+            else:
+                for idx, tc in enumerate(test_cases, 1):
+                    with st.container():
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.subheader(f"{idx}. {tc.get('title', 'Untitled')}")
+                        with col2:
+                            priority = tc.get('priority', 'Medium')
+                            priority_color = {
+                                'High': '🔴',
+                                'Medium': '🟡',
+                                'Low': '🟢'
+                            }.get(priority, '⚪')
+                            st.markdown(f"**{priority_color} {priority}**")
+                        
+                        st.markdown(f"**Description:** {tc.get('description', 'N/A')}")
+                        
+                        st.markdown("**Test Steps:**")
+                        steps = tc.get('steps', [])
+                        for step_idx, step in enumerate(steps, 1):
+                            st.markdown(f"{step_idx}. {step}")
+                        
+                        st.markdown(f"**Expected Result:** {tc.get('expectedResult', 'N/A')}")
+                        st.divider()
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666;'>
+    <p>Powered by Google Gemini AI | Free tier available</p>
+</div>
+""", unsafe_allow_html=True)
