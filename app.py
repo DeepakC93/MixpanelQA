@@ -1,11 +1,19 @@
 import streamlit as st
-import docx
+try:
+    from docx import Document
+except ImportError:
+    st.error("⚠️ Missing dependency: python-docx. Please install it with: pip install python-docx")
+    st.stop()
 import json
 import csv
 import io
 import re
 from datetime import datetime
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+except ImportError:
+    st.error("⚠️ Missing dependency: google-generativeai. Please install it with: pip install google-generativeai")
+    st.stop()
 import os
 from typing import List, Dict, Any
 
@@ -90,7 +98,7 @@ CRITICAL REQUIREMENTS:
 def extract_text_from_docx(file) -> str:
     """Extract text from DOCX file"""
     try:
-        doc = docx.Document(file)
+        doc = Document(file)
         text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
         return text
     except Exception as e:
@@ -372,3 +380,4 @@ st.markdown("""
     <p>Powered by Google Gemini AI | Free tier available</p>
 </div>
 """, unsafe_allow_html=True)
+
